@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <algorithm>
 
 const int MAX_CLIENTS = 100;
 
@@ -26,25 +27,153 @@ Server::Server(int port, char *data_file_name)
     // TCP
     tcp_sockfd = socket(PF_INET, SOCK_STREAM, 0);
     if (tcp_sockfd < 0)
-        std::cerr << "Error on socket() call for TCP\n";
+        std::cerr << "Error:  socket()  for TCP\n";
 
     if (bind(tcp_sockfd, (sockaddr*) &addr, sizeof(sockaddr_in)) < 0)
-        std::cerr << "Error on bind() call for TCP\n";
+        std::cerr << "Error:  bind()  for TCP\n";
 
     listen(tcp_sockfd, MAX_CLIENTS);
 
     // UDP
     udp_sockfd = socket(PF_INET, SOCK_DGRAM, 0);
     if (udp_sockfd < 0)
-        std::cerr << "Error on socket() call for UDP\n";
+        std::cerr << "Error:  socket()  for UDP\n";
 
     if (bind(udp_sockfd, (sockaddr*) &addr, sizeof(sockaddr_in)) < 0)
-        std::cerr << "Error on bind() call for UDP\n";
+        std::cerr << "Error:  bind()  for UDP\n";
+
+    FD_SET(tcp_sockfd, &fds);
+    FD_SET(udp_sockfd, &fds);
+    FD_SET(0, &fds);
 
     readData();
 }
 
 void Server::run()
+{
+    static const int BUFLEN = 1024;
+    char buffer[BUFLEN];
+    int fdmax = std::max(tcp_sockfd, udp_sockfd);
+    fd_set tmp_fds;
+
+    bool running = true;
+    while (running)
+    {
+        tmp_fds = fds;
+
+        if (select(fdmax + 1, &tmp_fds, NULL, NULL, NULL) == -1)
+            std::cerr << "Error:  select() \n";
+
+        for (int i = 0; i <= fdmax; i++)
+            if (FD_ISSET(i, &tmp_fds))
+            {
+                if (i == 0)
+                {
+                    // Read from stdin
+                    std::cin >> buffer;
+                    if (strcmp(buffer, "quit") == 0)
+                        running = false;
+
+                    // notice clients???
+                }
+                else if (i == tcp_sockfd)
+                {
+                    // Accept connection
+                    sockaddr client_addr;
+                    socklen_t client_len;
+                    int newsockfd = accept(tcp_sockfd, (sockaddr*) &client_addr,
+                            &client_len);
+
+                    if (newsockfd == -1)
+                        std::cerr << "Error:  accept() \n";
+                    else
+                    {
+                        std::cerr << "Accepted connection (socket = " <<
+                            newsockfd << ")\n";
+
+                        FD_SET(newsockfd, &fds);
+                        fdmax = std::max(fdmax, newsockfd);
+
+                        connections.insert( std::make_pair(newsockfd,
+                                    Connection(-1)) );
+                    }
+                }
+                else if (i == udp_sockfd)
+                {
+                    // UDP message
+                }
+                else
+                {
+                    // TCP message 
+                    memset(buffer, 0, sizeof(buffer));
+                    int recv_len = recv(i, buffer, sizeof(buffer), 0);
+
+                    if (recv_len < 0)
+                    {
+                        std::cerr << "Error: recv()\n";
+                        continue;
+                    }
+                    else if (recv_len == 0)
+                    {
+                        std::cout << "Socket " << i << " closed\n";
+                        close(i);
+                        FD_CLR(i, &fds);
+
+                        continue;
+                    }
+
+                    if (strstr(buffer, "login") != NULL)
+                        login(i, *(int*)(buffer + 5), *(int*)(buffer + 9));
+                    else if (strstr(buffer, "logout") != NULL)
+                        logout(i);
+                    else if (strstr(buffer, "listsold") != NULL)
+                        listSold(i);
+                    else if (strstr(buffer, "transfer") != NULL)
+                        transfer(i, *(int*)(buffer + 8), *(Balance*)(buffer + 12));
+                    else if (strstr(buffer, "quit") != NULL)
+                        running = false;
+                    else
+                        std::cerr << "Error: Unknown request: " << buffer <<
+                            '\n';
+                }
+            }
+    }
+}
+
+void Server::login(int sockfd, int card_nr, int pin)
+{
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    if (connections[sockfd].card_nr != -1)
+        *(int*)buffer = -2; // client is already logged in
+    else if (users[card_nr].locked)
+        *(int*)buffer = -5; // card is locked
+    else if (pin != users[card_nr].pin)
+        *(int*)buffer = -3; // wrong pin
+    else
+    {
+        // ok
+        strcpy(buffer, "Welcome ");
+        strcat(buffer, users[card_nr].first_name);
+        strcat(buffer, " ");
+        strcat(buffer, users[card_nr].surname);
+
+        connections[sockfd].card_nr = card_nr;
+    }
+
+    send(sockfd, buffer, sizeof(buffer), 0);
+}
+
+void Server::logout(int sockfd)
+{
+}
+
+void Server::listSold(int sockfd)
+{
+}
+
+void Server::transfer(int sockfd, int card_nr, Balance value)
 {
 }
 
