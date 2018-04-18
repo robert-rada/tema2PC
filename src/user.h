@@ -46,7 +46,10 @@ public:
 
         in >> buffer;
         strncpy(user.password, buffer, 8);
-        in >> user.balance;
+
+        std::string input_balance;
+        in >> input_balance;
+        user.balance = Balance(input_balance);
 
         user.first_name[12] = 0;
         user.surname[12] = 0;

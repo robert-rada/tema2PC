@@ -118,6 +118,9 @@ int main(int argc, char **argv)
         else if (command == "logout")
         {
         }
+        else if (command == "listsold")
+        {
+        }
         else
             log("Unknown command: " + command + '\n');
 

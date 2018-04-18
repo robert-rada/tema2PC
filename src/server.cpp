@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <algorithm>
+#include <sstream>
 
 const int MAX_CLIENTS = 100;
 
@@ -182,7 +183,6 @@ void Server::logout(int sockfd)
         *(int*)buffer = -1;
     else
     {
-        connections[sockfd] = Connection();
         connections.erase(connections.find(sockfd));
         connections.insert( std::make_pair(sockfd, Connection()) );
         strcpy(buffer+4, "Clientul a fost deconectat\n");
@@ -193,6 +193,18 @@ void Server::logout(int sockfd)
 
 void Server::listSold(int sockfd)
 {
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    if (connections[sockfd].card_nr < 0)
+        *(int*)buffer = -1;
+    else
+    {
+        Balance t = users[connections[sockfd].card_nr].balance;
+        strcpy(buffer + 4, t.toString().c_str());
+    }
+
+    send(sockfd, buffer, sizeof(buffer), 0);
 }
 
 void Server::transfer(int sockfd, int card_nr, Balance value)
@@ -230,7 +242,7 @@ void Server::updateData()
         out << user.card_nr << ' ';
         out << user.pin << ' ';
         out << user.password << ' ';
-        out << user.balance << '\n';
+        out << user.balance.toString() << '\n';
     }
 
     out.close();
