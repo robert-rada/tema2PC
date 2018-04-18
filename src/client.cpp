@@ -10,15 +10,15 @@
 #include <arpa/inet.h>
 #include <algorithm>
 
-std::string errors[] = {"", "-1: Clientul nu este autentificat",
-                            "-2: Sesiune deja deschisa",
-                            "-3: Pin gresit",
-                            "-4: Numar card inexistent",
-                            "-5: Card blocat",
-                            "-6: Operatie esuata",
-                            "-7: Deblocare esuata",
-                            "-8: Fonduri insuficiente",
-                            "-9: Operatie anulata",
+std::string errors[] = {"", "-1: Clientul nu este autentificat\n",
+                            "-2: Sesiune deja deschisa\n",
+                            "-3: Pin gresit\n",
+                            "-4: Numar card inexistent\n",
+                            "-5: Card blocat\n",
+                            "-6: Operatie esuata\n",
+                            "-7: Deblocare esuata\n",
+                            "-8: Fonduri insuficiente\n",
+                            "-9: Operatie anulata\n",
                             "-10: Eroare la apel "};
 
 std::ofstream log_file("log.txt");
@@ -52,6 +52,39 @@ int initTCPSocket(char server_addr[], int server_port)
     return sockfd;
 }
 
+int receiveResponse(int tcp_sockfd)
+{
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+
+    int count = recv(tcp_sockfd, buffer, sizeof(buffer), 0);
+    if (count > 0)
+    {
+        if (*(int*)buffer != 0)
+        {
+            log(errors[-1 * ((int*)buffer)[0]]);
+            log("\n");
+        }
+        else
+        {
+            log("IBANK> ");
+            log(buffer + 4);
+            log("\n");
+        }
+    }
+    else if (count == 0)
+    {
+        log ("Connection closed\n");
+        return -1;
+    }
+    else
+    {
+        log (errors[10] + " recv()\n");
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3)
@@ -81,37 +114,19 @@ int main(int argc, char **argv)
 
             ((int*)data)[0] = card_nr;
             ((int*)data)[1] = pin;
-            int count = send(tcp_sockfd, buffer, comm_len + 8, 0);
-            if (count < 0)
-                log(errors[10] + " send()\n");
-
-            memset(buffer, 0, sizeof(buffer));
-            count = recv(tcp_sockfd, buffer, sizeof(buffer), 0);
-            if (count > 0)
-            {
-                if (*(int*)buffer != 0)
-                {
-                    log(errors[-1 * ((int*)buffer)[0]]);
-                    log("\n");
-                }
-                else
-                {
-                    log(buffer + 4);
-                    log("\n");
-                }
-            }
-            else if (count == 0)
-            {
-                log ("Connection closed\n");
-                running = false;
-            }
-            else
-            {
-                log (errors[10] + " recv()\n");
-            }
+        }
+        else if (command == "logout")
+        {
         }
         else
             log("Unknown command: " + command + '\n');
+
+        int count = send(tcp_sockfd, buffer, comm_len + 8, 0);
+        if (count < 0)
+            log(errors[10] + " send()\n");
+
+        if (receiveResponse(tcp_sockfd) < 0)
+            running = false;
     }
 
     log_file.close();

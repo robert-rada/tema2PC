@@ -145,7 +145,7 @@ void Server::login(int sockfd, int card_nr, int pin)
     char buffer[64];
     memset(buffer, 0, sizeof(buffer));
 
-    if (connections[sockfd].card_nr != -1)
+    if (connections[sockfd].card_nr >= 0)
         *(int*)buffer = -2; // client is already logged in
     else if (users.find(card_nr) == users.end())
         *(int*)buffer = -4; // card not found
@@ -165,6 +165,7 @@ void Server::login(int sockfd, int card_nr, int pin)
         strcat(buffer+4, users[card_nr].first_name);
         strcat(buffer+4, " ");
         strcat(buffer+4, users[card_nr].surname);
+        strcat(buffer+4, "\n");
 
         connections[sockfd].card_nr = card_nr;
     }
@@ -174,6 +175,20 @@ void Server::login(int sockfd, int card_nr, int pin)
 
 void Server::logout(int sockfd)
 {
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    if (connections[sockfd].card_nr < 0)
+        *(int*)buffer = -1;
+    else
+    {
+        connections[sockfd] = Connection();
+        connections.erase(connections.find(sockfd));
+        connections.insert( std::make_pair(sockfd, Connection()) );
+        strcpy(buffer+4, "Clientul a fost deconectat\n");
+    }
+
+    send(sockfd, buffer, sizeof(buffer), 0);
 }
 
 void Server::listSold(int sockfd)
