@@ -1,0 +1,4 @@
+server: |error no|data|
+            4B
+client: |command|data|
+          text

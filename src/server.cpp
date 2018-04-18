@@ -147,17 +147,24 @@ void Server::login(int sockfd, int card_nr, int pin)
 
     if (connections[sockfd].card_nr != -1)
         *(int*)buffer = -2; // client is already logged in
+    else if (users.find(card_nr) == users.end())
+        *(int*)buffer = -4; // card not found
     else if (users[card_nr].locked)
         *(int*)buffer = -5; // card is locked
     else if (pin != users[card_nr].pin)
+    {
         *(int*)buffer = -3; // wrong pin
+        int tries = ++connections[sockfd].login_tries;
+        if (tries >= 3)
+            users[card_nr].locked = true;
+    }
     else
     {
         // ok
-        strcpy(buffer, "Welcome ");
-        strcat(buffer, users[card_nr].first_name);
-        strcat(buffer, " ");
-        strcat(buffer, users[card_nr].surname);
+        strcpy(buffer+4, "Welcome ");
+        strcat(buffer+4, users[card_nr].first_name);
+        strcat(buffer+4, " ");
+        strcat(buffer+4, users[card_nr].surname);
 
         connections[sockfd].card_nr = card_nr;
     }
