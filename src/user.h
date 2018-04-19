@@ -4,6 +4,7 @@
 #include "balance.h"
 #include <cstring>
 #include <fstream>
+#include <iostream>
 
 class User
 {
@@ -16,8 +17,9 @@ public:
     Balance balance;
     bool locked;
 
-    User() {};
+    User() : locked(false) {};
 
+    /*
     User(char first_name[], char surnname[], int card_nr, int pin,
             char password[], Balance balance)
         : card_nr(card_nr), pin(pin), balance(balance)
@@ -32,6 +34,7 @@ public:
 
         locked = false;
     }
+    */
 
     static void parseUser(std::ifstream &in, User &user)
     {

@@ -46,7 +46,7 @@ int initTCPSocket(char server_addr[], int server_port)
     if (sockfd < 0)
         log(errors[10] + "socket()\n");
 
-    if (connect(sockfd, (sockaddr*) &addr, sizeof(addr)) < 0)
+    if (connect(sockfd, (sockaddr*) &addr, sizeof(sockaddr_in)) < 0)
         log(errors[10] + "connect()\n");
 
     return sockfd;
@@ -64,12 +64,16 @@ int receiveResponse(int tcp_sockfd)
         {
             log(errors[-1 * ((int*)buffer)[0]]);
             log("\n");
+
+            return ((int*)buffer)[0];
         }
         else
         {
             log("IBANK> ");
             log(buffer + 4);
             log("\n");
+
+            return 0;
         }
     }
     else if (count == 0)
@@ -80,6 +84,8 @@ int receiveResponse(int tcp_sockfd)
     else
     {
         log (errors[10] + " recv()\n");
+
+        return -10;
     }
 
     return 0;
@@ -97,6 +103,7 @@ int main(int argc, char **argv)
 
     char buffer[1024];
     bool running = true;
+    bool waiting_transfer = false;
     while (running)
     {
         std::string command;
@@ -110,7 +117,7 @@ int main(int argc, char **argv)
         {
             int card_nr, pin;
             std::cin >> card_nr >> pin;
-            log_file << ' ' << card_nr << ' ' << pin << '\n';
+            log_file << ' ' << card_nr << ' ' << pin;
 
             ((int*)data)[0] = card_nr;
             ((int*)data)[1] = pin;
@@ -121,16 +128,58 @@ int main(int argc, char **argv)
         else if (command == "listsold")
         {
         }
-        else
-            log("Unknown command: " + command + '\n');
+        else if (command == "transfer")
+        {
+            int card_nr;
+            std::string input_amount;
+            std::cin >> card_nr >> input_amount;
+            log_file << ' ' << card_nr << ' ' << input_amount;
 
-        int count = send(tcp_sockfd, buffer, comm_len + 8, 0);
+            Balance amount(input_amount);
+
+            ((int*)data)[0] = card_nr;
+            *(Balance*)(data + 4) = amount;
+            waiting_transfer = true;
+        }
+        else if (command == "quit")
+        {
+        }
+        else
+        {
+            if (waiting_transfer)
+            {
+                strcpy(buffer, "transfer");
+                data = buffer + strlen(buffer);
+
+                if (command[0] == 'y')
+                    ((int*)data)[0] = 0;
+                else
+                    ((int*)data)[0] = -1;
+
+                waiting_transfer = false;
+            }
+            else
+            {
+                log("Unknown command: " + command + '\n');
+                continue;
+            }
+        }
+
+        log("\n");
+
+        int count = send(tcp_sockfd, buffer, 128, 0);
         if (count < 0)
             log(errors[10] + " send()\n");
 
-        if (receiveResponse(tcp_sockfd) < 0)
+        int error_nr = receiveResponse(tcp_sockfd);
+        if (error_nr < 0 || command == "quit")
             running = false;
+
+        if (error_nr == 8)
+            waiting_transfer = false;
     }
+
+    close(tcp_sockfd);
 
     log_file.close();
 

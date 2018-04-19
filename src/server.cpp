@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <sstream>
 
-const int MAX_CLIENTS = 100;
+const int MAX_CLIENTS = 10;
 
 Server::Server(int port, char *data_file_name)
     : data_file_name(data_file_name)
@@ -33,7 +33,8 @@ Server::Server(int port, char *data_file_name)
     if (bind(tcp_sockfd, (sockaddr*) &addr, sizeof(sockaddr_in)) < 0)
         std::cerr << "Error:  bind()  for TCP\n";
 
-    listen(tcp_sockfd, MAX_CLIENTS);
+    if (listen(tcp_sockfd, MAX_CLIENTS) < 0)
+        std::cerr << "Error: listen()\n";
 
     // UDP
     udp_sockfd = socket(PF_INET, SOCK_DGRAM, 0);
@@ -50,6 +51,29 @@ Server::Server(int port, char *data_file_name)
     readData();
 }
 
+void Server::printData()
+{
+    std::cerr << "\nUsers:\n";
+    for (const auto &it: users)
+        std::cerr << it.first << ' '
+            << it.second.first_name << ' '
+            << it.second.surname << ' '
+            << it.second.card_nr << ' '
+            << it.second.pin << ' '
+            << it.second.password << ' '
+            << it.second.balance.toString() << ' '
+            << (it.second.locked ? "True" : "False") << '\n'; 
+
+    std::cerr << "\nConnections:\n";
+    for (const auto &it: connections)
+        std::cerr << it.first << ' '
+            << it.second.card_nr << ' '
+            << it.second.login_tries << ' '
+            << it.second.waiting_transaction << ' '
+            << it.second.transaction_card << ' '
+            << it.second.transaction_amount.toString() << '\n';
+}
+
 void Server::run()
 {
     static const int BUFLEN = 1024;
@@ -60,6 +84,8 @@ void Server::run()
     bool running = true;
     while (running)
     {
+        printData();
+
         tmp_fds = fds;
 
         if (select(fdmax + 1, &tmp_fds, NULL, NULL, NULL) == -1)
@@ -82,11 +108,12 @@ void Server::run()
                     // Accept connection
                     sockaddr client_addr;
                     socklen_t client_len;
-                    int newsockfd = accept(tcp_sockfd, (sockaddr*) &client_addr,
-                            &client_len);
+                    //int newsockfd = accept(tcp_sockfd, &client_addr, &client_len);
+                    int newsockfd = accept(tcp_sockfd, NULL, NULL);
 
                     if (newsockfd == -1)
-                        std::cerr << "Error:  accept() \n";
+                        std::cerr << "Error:  accept() \n"
+                            << "errno = " << errno << '\n';
                     else
                     {
                         std::cerr << "Accepted connection (socket = " <<
@@ -117,6 +144,7 @@ void Server::run()
                     else if (recv_len == 0)
                     {
                         std::cout << "Socket " << i << " closed\n";
+                        connections.erase(connections.find(i));
                         close(i);
                         FD_CLR(i, &fds);
 
@@ -145,6 +173,9 @@ void Server::login(int sockfd, int card_nr, int pin)
 {
     char buffer[64];
     memset(buffer, 0, sizeof(buffer));
+
+    if (connections.find(sockfd) == connections.end())
+        std::cerr << "Error: connection not found\n";
 
     if (connections[sockfd].card_nr >= 0)
         *(int*)buffer = -2; // client is already logged in
@@ -179,12 +210,14 @@ void Server::logout(int sockfd)
     char buffer[64];
     memset(buffer, 0, sizeof(buffer));
 
+    if (connections.find(sockfd) == connections.end())
+        std::cerr << "Error: Connection not found\n";
+
     if (connections[sockfd].card_nr < 0)
         *(int*)buffer = -1;
     else
     {
-        connections.erase(connections.find(sockfd));
-        connections.insert( std::make_pair(sockfd, Connection()) );
+        connections[sockfd] = Connection();
         strcpy(buffer+4, "Clientul a fost deconectat\n");
     }
 
@@ -201,7 +234,7 @@ void Server::listSold(int sockfd)
     else
     {
         Balance t = users[connections[sockfd].card_nr].balance;
-        strcpy(buffer + 4, t.toString().c_str());
+        strcpy(buffer + 4, (t.toString() + "\n").c_str());
     }
 
     send(sockfd, buffer, sizeof(buffer), 0);
@@ -209,6 +242,54 @@ void Server::listSold(int sockfd)
 
 void Server::transfer(int sockfd, int card_nr, Balance value)
 {
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    if (connections[sockfd].card_nr < 0)
+        *(int*)buffer = -1; // not logged in
+    else if (connections[sockfd].waiting_transaction == true)
+    {
+        if (card_nr == 0)
+        {
+            card_nr = connections[sockfd].transaction_card;
+            value = connections[sockfd].transaction_amount;
+            
+            users[card_nr].balance += value;
+            users[connections[sockfd].card_nr].balance -= value;
+
+            connections[sockfd].waiting_transaction = false;
+
+            strcpy(buffer + 4, "Transfer realizat cu succes\n");
+        }
+        else
+        {
+            *(int*)buffer = -9; // transaction cancelled
+        }
+    }
+    else if (users.find(card_nr) == users.end())
+        *(int*)buffer = -4; // card not found
+    else if (connections[sockfd].waiting_transaction == false)
+    {
+        if (users[connections[sockfd].card_nr].balance < value)
+        {
+            *(int*)buffer = -8;
+        }
+        else
+        {
+            connections[sockfd].waiting_transaction = true;
+            connections[sockfd].transaction_amount = value;
+            connections[sockfd].transaction_card = card_nr;
+
+            std::ostringstream msg;
+            msg << "Transfer " << value.toString() << " catre "
+                << users[card_nr].first_name << ' ' 
+                << users[card_nr].surname << "? [y/n]";
+
+            strcpy(buffer + 4, msg.str().c_str());
+        }
+    }
+
+    send(sockfd, buffer, sizeof(buffer), 0);
 }
 
 void Server::readData()
@@ -236,6 +317,9 @@ void Server::updateData()
 
     for (const auto &it: users)
     {
+        if (it.first < 0)
+            continue;
+
         const User &user = it.second;
         out << user.first_name << ' ';
         out << user.surname << ' ';
@@ -251,6 +335,9 @@ void Server::updateData()
 Server::~Server()
 {
     std::cerr << "Closing server...\n";
+
+    for (const auto& it: connections)
+        close(it.first);
 
     close(tcp_sockfd);
     close(udp_sockfd);

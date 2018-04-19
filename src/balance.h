@@ -37,9 +37,39 @@ public:
         if (value % 100 < 10)
             stream << '0';
 
-        stream << value % 100 << '\n';
+        stream << value % 100;
 
         return stream.str();
+    }
+
+    Balance operator+ (const Balance &other) const
+    {
+        return Balance(this->value + other.value);
+    }
+
+    Balance operator- (const Balance &other) const
+    {
+        return Balance(this->value - other.value);
+    }
+
+    Balance& operator+= (const Balance &other)
+    {
+        *this = *this + other;
+    }
+
+    Balance& operator-= (const Balance &other)
+    {
+        *this = *this - other;
+    }
+
+    bool operator< (const Balance &other) const
+    {
+        return this->value < other.value;
+    }
+
+    bool operator> (const Balance &other) const
+    {
+        return this->value > other.value;
     }
 };
 

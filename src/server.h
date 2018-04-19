@@ -11,12 +11,13 @@ private:
     int tcp_sockfd;
     int udp_sockfd;
     char *data_file_name;
-    std::map<int, User> users; // key = card number
-    std::map<int, Connection> connections; // key = socketfd, value = card number
-    std::map<int, std::pair<int, Balance>> waiting_transactions; 
     fd_set fds;
 
+    std::map<int, User> users; // key = card number
+    std::map<int, Connection> connections; // key = socketfd, value = card number
+
     void readData();
+    void printData();
     void updateData();
     void login(int sockfd, int card_nr, int pin);
     void logout(int sockfd);
@@ -25,6 +26,7 @@ private:
     void unlock();
 
 public:
+
     Server(int port, char *data_file_name);
     ~Server();
     void run();
