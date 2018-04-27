@@ -35,13 +35,8 @@ void log(const char *message)
     log_file << message;
 }
 
-int initTCPSocket(char server_addr[], int server_port)
+int initTCPSocket(sockaddr_in &addr)
 {
-    sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(server_port);
-    inet_aton(server_addr, &addr.sin_addr);
-    
     int sockfd = socket(PF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
         log(errors[10] + "socket()\n");
@@ -50,6 +45,45 @@ int initTCPSocket(char server_addr[], int server_port)
         log(errors[10] + "connect()\n");
 
     return sockfd;
+}
+
+int receiveResponseUDP(int udp_sockfd)
+{
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+
+    int count = recvfrom(udp_sockfd, buffer, sizeof(buffer), 0, NULL, NULL);
+    if (count > 0)
+    {
+        if (*(int*)buffer != 0)
+        {
+            log(errors[-1 * ((int*)buffer)[0]]);
+            log("\n");
+
+            return ((int*)buffer)[0];
+        }
+        else
+        {
+            log("UNLOCK> ");
+            log(buffer + 4);
+            log("\n");
+
+            return 0;
+        }
+    }
+    else if (count == 0)
+    {
+        log ("Connection closed\n");
+        return -100;
+    }
+    else
+    {
+        log (errors[10] + " recv()\n");
+
+        return -10;
+    }
+
+    return 0;
 }
 
 int receiveResponse(int tcp_sockfd)
@@ -79,7 +113,7 @@ int receiveResponse(int tcp_sockfd)
     else if (count == 0)
     {
         log ("Connection closed\n");
-        return -1;
+        return -100;
     }
     else
     {
@@ -99,13 +133,23 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    int tcp_sockfd = initTCPSocket(argv[1], atoi(argv[2]));
+    sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(atoi(argv[2]));
+    inet_aton(argv[1], &addr.sin_addr);
 
+    int tcp_sockfd = initTCPSocket(addr);
+    int udp_sockfd = socket(PF_INET, SOCK_DGRAM, 0);
+
+    int last_card_nr = -1;
     char buffer[1024];
     bool running = true;
     bool waiting_transfer = false;
+    bool waiting_unlock = false;
     while (running)
     {
+        bool tcp = true;
+
         std::string command;
         std::cin >> command;
         log_file << command;
@@ -121,6 +165,8 @@ int main(int argc, char **argv)
 
             ((int*)data)[0] = card_nr;
             ((int*)data)[1] = pin;
+
+            last_card_nr = card_nr;
         }
         else if (command == "logout")
         {
@@ -141,6 +187,12 @@ int main(int argc, char **argv)
             *(Balance*)(data + 4) = amount;
             waiting_transfer = true;
         }
+        else if (command == "unlock")
+        {
+            tcp = false;
+            waiting_unlock = true;
+            *(int*)data = last_card_nr;
+        }
         else if (command == "quit")
         {
         }
@@ -158,6 +210,11 @@ int main(int argc, char **argv)
 
                 waiting_transfer = false;
             }
+            else if (waiting_unlock)
+            {
+                tcp = false;
+                waiting_unlock = false;
+            }
             else
             {
                 log("Unknown command: " + command + '\n');
@@ -167,16 +224,36 @@ int main(int argc, char **argv)
 
         log("\n");
 
-        int count = send(tcp_sockfd, buffer, 128, 0);
-        if (count < 0)
-            log(errors[10] + " send()\n");
+        if (tcp)
+        {
+            int count = send(tcp_sockfd, buffer, 128, 0);
+            if (count < 0)
+                log(errors[10] + " send()\n");
+        }
+        else
+        {
+            int count = sendto(udp_sockfd, buffer, 128, 0, (sockaddr*) &addr,
+                    sizeof(addr));
+            if (count < 0)
+                log(errors[10] + " sendto()\n");
+        }
 
-        int error_nr = receiveResponse(tcp_sockfd);
-        if (error_nr < 0 || command == "quit")
+        int error_nr;
+        if (tcp)
+            error_nr = receiveResponse(tcp_sockfd);
+        else
+        {
+            error_nr = receiveResponseUDP(udp_sockfd);
+        }
+
+        if (error_nr == -100 || command == "quit")
             running = false;
 
         if (error_nr == 8)
             waiting_transfer = false;
+
+        if (error_nr == 4 || error_nr == 6)
+            waiting_unlock = false;
     }
 
     close(tcp_sockfd);

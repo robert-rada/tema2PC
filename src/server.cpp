@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <algorithm>
 #include <sstream>
 
@@ -128,10 +129,36 @@ void Server::run()
                 }
                 else if (i == udp_sockfd)
                 {
+                    std::cout << "Received UDP request\n";
+
                     // UDP message
+                    memset(buffer, 0, sizeof(buffer));
+
+                    sockaddr_in client_addr;
+                    unsigned int client_len = sizeof(client_addr);
+                    int recv_len = recvfrom(i, buffer, sizeof(buffer), 0, 
+                            (sockaddr*) &client_addr, &client_len);
+                    
+                    if (recv_len < 0)
+                    {
+                        std::cerr << "Error: recvfrom()\n" << strerror(recv_len)
+                            << '\n';
+                        continue;
+                    }
+
+                    if (strstr(buffer, "unlock") != NULL)
+                    {
+                        int &card_nr = *(int*)(buffer + strlen("unlock"));
+                        unlock(card_nr, client_addr);
+                    }
+                    else
+                    {
+                        unlockResponse(client_addr, buffer);
+                    }
                 }
                 else
                 {
+                    std::cout << "Received TCP request\n";
                     // TCP message 
                     memset(buffer, 0, sizeof(buffer));
                     int recv_len = recv(i, buffer, sizeof(buffer), 0);
@@ -144,7 +171,11 @@ void Server::run()
                     else if (recv_len == 0)
                     {
                         std::cout << "Socket " << i << " closed\n";
-                        connections.erase(connections.find(i));
+
+                        auto p = connections.find(i);
+                        if (p != connections.end())
+                            connections.erase(p);
+
                         close(i);
                         FD_CLR(i, &fds);
 
@@ -292,6 +323,58 @@ void Server::transfer(int sockfd, int card_nr, Balance value)
     send(sockfd, buffer, sizeof(buffer), 0);
 }
 
+void Server::unlock(int card_nr, sockaddr_in &client_addr)
+{
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    if (users[card_nr].locked == false)
+        *(int*)buffer = -6; // card not locked
+    else if (users.find(card_nr) == users.end())
+        *(int*)buffer = -4; // card not found
+    else
+    {
+        waiting_unlocks.insert( std::make_pair(Address(client_addr), card_nr) );
+        strcpy(buffer + 4, "Trimite parola secreta");
+    }
+
+    int count = sendto(udp_sockfd, buffer, sizeof(buffer), 0, (sockaddr*) &client_addr,
+            sizeof(client_addr));
+
+    if (count <= 0)
+    {
+        std::cerr << "Error: sendto() " << strerror(errno) << "\n";
+    }
+    std::cerr << "address: " << inet_ntoa(client_addr.sin_addr) << '\n';
+    std::cerr << "port: " << client_addr.sin_port << '\n';
+    std::cerr << sizeof(client_addr) << ' ' << sizeof(sockaddr_in) << '\n';
+    
+}
+
+void Server::unlockResponse(sockaddr_in &client_addr, char *password)
+{
+    char buffer[64];
+    memset(buffer, 0, sizeof(buffer));
+
+    if (strcmp(users[waiting_unlocks[client_addr]].password, password) == 0)
+    {
+        int card_nr = waiting_unlocks[client_addr];
+
+        auto p = waiting_unlocks.find(client_addr);
+        if (p != waiting_unlocks.end())
+            waiting_unlocks.erase(p);
+        
+        users[card_nr].locked = false;
+
+        strcpy(buffer + 4, "Client deblocat\n");
+    }
+    else
+        *(int*)buffer = -7; // wrong password
+
+    sendto(udp_sockfd, buffer, sizeof(buffer), 0, (sockaddr*) &client_addr,
+            sizeof(client_addr));
+}
+
 void Server::readData()
 {
     std::ifstream in(data_file_name);
@@ -313,13 +396,14 @@ void Server::updateData()
 {
     std::ofstream out(data_file_name);
 
+    auto p = users.find(-1);
+    if (p != users.end())
+        users.erase(p);
+
     out << users.size() << '\n';
 
     for (const auto &it: users)
     {
-        if (it.first < 0)
-            continue;
-
         const User &user = it.second;
         out << user.first_name << ' ';
         out << user.surname << ' ';
@@ -336,11 +420,11 @@ Server::~Server()
 {
     std::cerr << "Closing server...\n";
 
+    updateData();
+
     for (const auto& it: connections)
         close(it.first);
 
     close(tcp_sockfd);
     close(udp_sockfd);
-
-    updateData();
 }
